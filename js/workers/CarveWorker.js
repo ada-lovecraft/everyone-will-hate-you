@@ -1,5 +1,5 @@
 'use strict';
-importScripts('../Point.js','../Maze.js', '../MazeCell.js', '../Mouse.js', '../CarverMouse.js', '../Utils.js', '../signals.js');
+importScripts('../Point.js','../Maze.js', '../MazeCell.js', '../Mouse.js', '../CarverMouse.js', '../Utils.js', '../signals.js','../polyfills.js');
 var maze,
     pathDistance,
     longestDistance,
