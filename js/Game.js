@@ -14,7 +14,7 @@ var Game = function(ctx) {
   this.mazePixelWidth = this.mazeWidth * this.tileSize;
   this.mazePixelHeight = this.mazeHeight * this.tileSize;
   this.lifetimeSatisfaction = 0;
-  this.satisfaction = 1000000;
+  this.satisfaction = 0;
   this.maxSatisfaction = 0;
   this.mazeSatisfaction = 100;
 
