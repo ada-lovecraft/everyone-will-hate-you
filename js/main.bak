@@ -1,0 +1,753 @@
+/* jsint bitwise:false */
+'use strict';
+var canvas,
+  ctx,
+  grid,
+  tileSize,
+  // maze variables
+  mazeWidth,
+  mazeHeight,
+  totalTiles,
+  backTrack,
+  activeCell,
+  exitCell,
+  longestDistance,
+  pathDistance,
+  mazeCreated,
+  shouldSolve,
+  showDepths = true,
+  mice = [],
+  depths = {},
+  // animation variables
+  updateFrame,
+  raf = window.requestAnimationFrame,
+
+  // display variables
+  showHeatMap = true,
+  showMaze = true,
+
+  heatmaps = {
+    rw: true,
+    rwm: true
+  },
+
+  // inputs
+  rowsInput,
+  colsInput,
+  sizeInput,
+
+  //outputs
+  rwSteps,
+  rwmSteps,
+
+  // buttons
+  stepBtn,
+  runBtn,
+  goBtn,
+  quickBtn,
+  solveRunBtn,
+  quickSolveRunBtn,
+  toggleMazeBtn,
+  toggleDepthBtn,
+  rwHeatmapBtn,
+  rwmHeatmapBtn,
+
+
+  //button groups
+  step2Buttons,
+  step3Buttons,
+  step4Buttons,
+
+  // custom events
+  onMazeCompleted = new Event('onMazeCompleted');
+
+  // initialize chroma scale
+  var low = chroma('#6D3FA9');
+  var mid = chroma('#BFDE42');
+  var high = chroma('#5C59CD');
+  var colors = chroma.interpolate.bezier([low, mid, high]);
+  var cs = chroma.scale('RdYlBu');
+
+// bit masks
+var Walls = {
+  I: 0,
+  N: 1,
+  S: 2,
+  E: 4,
+  W: 8,
+  ENTRY: 16,
+  EXIT: 32,
+  VISITED: 64
+};
+
+bindView();
+
+disableButtons(step3Buttons);
+
+// create maze event listener
+window.addEventListener('onMazeCompleted', function() {
+  mazeCreated = true;
+  grid[0][0] |= Walls.ENTRY;
+  enableButtons(step3Buttons);
+});
+
+// create button event listeners
+runBtn.addEventListener('click', function() {
+  resetBacktrack();
+  disableButtons(step2Buttons, step3Buttons);
+});
+
+quickBtn.addEventListener('click', function() {
+  disableButtons(step2Buttons, step3Buttons);
+  resetBacktrack();
+  quickCarve(backTrack[0]);
+});
+
+solveRunBtn.addEventListener('click', function() {
+  shouldSolve = true;
+  disableButtons(step2Buttons,step3Buttons);
+  enableButtons(step4Buttons);
+});
+
+quickSolveRunBtn.addEventListener('click', function() {
+  disableButtons(step2Buttons,step3Buttons);
+  quickSolveRunBtn.text = 'Solving...';
+  mice.forEach(function(mouse) {
+    while(!mouse.solved) {
+      mouse.solver(mouse);
+    }
+  });
+  quickSolveRunBtn.text = 'Quick Solve';
+  enableButtons(step4Buttons);
+});
+
+
+goBtn.addEventListener('click', function() {
+  init(rowsInput.value, colsInput.value, sizeInput.value);
+  enableButtons(step2Buttons);
+  disableButtons(step3Buttons);
+});
+
+
+
+toggleMazeBtn.addEventListener('click', function() {
+  showMaze = !showMaze;
+});
+
+toggleDepthBtn.addEventListener('click', function() {
+  showDepths = !showDepths;
+});
+
+rwHeatmapBtn.addEventListener('click', function() {
+  mice[0].showTrail = rwHeatmapBtn.checked;
+});
+
+rwmHeatmapBtn.addEventListener('click', function() {
+  mice[1].showTrail = rwmHeatmapBtn.checked;
+});
+
+
+
+var OppositeWalls = {
+  N: Walls.S,
+  S: Walls.N,
+  E: Walls.W,
+  W: Walls.E
+};
+
+var SeekDirections = [{
+  key: 'N',
+  x: 0,
+  y: -1
+}, {
+  key: 'S',
+  x: 0,
+  y: 1
+}, {
+  key: 'E',
+  x: 1,
+  y: 0
+}, {
+  key: 'W',
+  x: -1,
+  y: 0
+}];
+var OppositeSeekDirections = {
+  N: 'S',
+  S: 'N',
+  E: 'W',
+  W: 'E'
+};
+
+var SeekLookup = {
+  'N': SeekDirections[0],
+  'S': SeekDirections[1],
+  'E': SeekDirections[2],
+  'W': SeekDirections[3],
+};
+
+var Point = function(x, y) {
+  this.x = x;
+  this.y = y;
+  this.directions = shuffle(SeekDirections.slice(0));
+};
+
+
+
+function init(width, height, size) {
+  tileSize = size;
+  mazeWidth = width;
+  mazeHeight = height;
+  totalTiles = width * height;
+  canvas = document.getElementById('maze');
+
+
+  ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw (new Error('you suck and you should kill yourself'));
+  }
+
+  canvas.width = width * size;
+  canvas.height = height * size;
+
+  mice = [];
+  depths = {};
+
+  mice.push({
+    pos: new Point(0, 0),
+    direction: null,
+    history: [],
+    solved: false,
+    color: '#FBB355',
+    showTrail: rwHeatmap.checked,
+    solver: randomWalk
+  });
+
+  mice.push({
+    pos: new Point(0, 0),
+    direction: null,
+    history: [],
+    solved: false,
+    color: '#55A7FB',
+    showTrail: rwmHeatmap.checked,
+    solver: randomMemoryWalk
+  });
+
+
+  showMaze = true;
+  showDepths = false;
+  mazeCreated = false;
+  activeCell = null;
+  longestDistance = 0;
+  pathDistance = 0;
+  exitCell = null;
+  shouldSolve = false;
+  backTrack = [];
+  populateGrid();
+  updateView();
+}
+
+function updateView() {
+  rwSteps.innerHTML = mice[0].history.length;
+  rwmSteps.innerHTML = mice[1].history.length;
+}
+
+function resetBacktrack() {
+  backTrack = [];
+  backTrack.push(new Point(0, 0));
+}
+
+function populateGrid() {
+  grid = [];
+  for (var y = 0; y < mazeHeight; y++) {
+    grid[y] = [];
+    for (var x = 0; x < mazeWidth; x++) {
+      grid[y].push(Walls.I);
+    }
+  }
+}
+
+
+function gridAt(x, y, value) {
+  if (value) {
+    grid[y][x] = value;
+  }
+  return grid[y][x];
+}
+
+function carve(point) {
+  var nextPoint, direction;
+  direction = point.directions.pop();
+  grid[point.y][point.x] |= Walls.VISITED;
+  if (direction) {
+    nextPoint = new Point(point.x + direction.x, point.y + direction.y);
+    if (inGridRange(nextPoint.x, nextPoint.y) && gridAt(nextPoint.x, nextPoint.y) === 0) {
+      grid[point.y][point.x] |= Walls[direction.key];
+
+      grid[nextPoint.y][nextPoint.x] |= OppositeWalls[direction.key];
+      backTrack.push(nextPoint);
+    }
+  } else {
+    grid[point.y][point.x] ^= Walls.VISITED;
+    if(!depths.hasOwnProperty(backTrack.length)) {
+      depths[backTrack.length] = [];
+    }
+    depths[backTrack.length].push(point);
+    if (backTrack.length > longestDistance) {
+      longestDistance = backTrack.length;
+      if (exitCell) {
+        grid[exitCell.y][exitCell.x] ^= Walls.EXIT;
+      }
+      exitCell = backTrack.pop();
+      grid[exitCell.y][exitCell.x] |= Walls.EXIT;
+    } else {
+      backTrack.pop();
+      if (!backTrack.length) {
+        window.dispatchEvent(onMazeCompleted);
+      }
+    }
+
+  }
+}
+
+function quickCarve(point) {
+  var nextPoint;
+  pathDistance++;
+  point.directions.forEach(function(direction) {
+    nextPoint = new Point(point.x + direction.x, point.y + direction.y);
+    if (inGridRange(nextPoint.x, nextPoint.y) && gridAt(nextPoint.x, nextPoint.y) === 0) {
+      grid[point.y][point.x] |= Walls[direction.key];
+      grid[nextPoint.y][nextPoint.x] |= OppositeWalls[direction.key];
+      quickCarve(nextPoint);
+    }
+
+  });
+  if (pathDistance > longestDistance) {
+    longestDistance = pathDistance;
+    if (exitCell) {
+      grid[exitCell.y][exitCell.x] ^= Walls.EXIT;
+    }
+    exitCell = point;
+    grid[exitCell.y][exitCell.x] |= Walls.EXIT;
+  }
+  if(!depths.hasOwnProperty(pathDistance)) {
+      depths[pathDistance] = [];
+    }
+    depths[pathDistance].push(point);
+  pathDistance--;
+  if (pathDistance === 0) {
+    window.dispatchEvent(onMazeCompleted);
+  }
+}
+
+function update() {
+  activeCell = null;
+  if (backTrack.length && !mazeCreated) {
+    activeCell = backTrack[backTrack.length - 1];
+    carve(activeCell);
+  } else if(shouldSolve) {
+    mice.forEach(function(mouse) {
+      mouse.solver(mouse);
+    });
+  }
+
+  draw();
+  updateView();
+  updateFrame = raf(update.bind(this, true));
+}
+
+
+
+function randomMemoryWalk(mouse) {
+  if (!mouse.solved) {
+    var nextPos;
+
+    if (mouse.pos.x === exitCell.x && mouse.pos.y === exitCell.y) {
+      mouse.solved = true;
+      return;
+    }
+
+    var currentCell = gridAt(mouse.pos.x, mouse.pos.y);
+    var possibleDirections = getPossible(currentCell);
+
+
+    var surrounding = [];
+    possibleDirections.forEach(function(d) {
+      var p = SeekLookup[d.key];
+      var n = new Point(mouse.pos.x + p.x, mouse.pos.y + p.y);
+
+      if (inGridRange(n.x, n.y)) {
+        p.visited = getMouseHistory(mouse, createHistoryKey(n)).length;
+        surrounding.push(p);
+      }
+    });
+
+    surrounding.sort(function(a, b) {
+      return a.visited - b.visited;
+    });
+
+    var nextDirection = surrounding[0];
+    nextPos = new Point(mouse.pos.x + nextDirection.x, mouse.pos.y + nextDirection.y);
+    var count = 0;
+    while (count < surrounding.length && (!inGridRange(nextPos.x, nextPos.y))) {
+      nextDirection = surrounding[count];
+      nextPos = new Point(mouse.pos.x + nextDirection.x, mouse.pos.y + nextDirection.y);
+      count++;
+      index = (index + count) % choices.length;
+    }
+
+    var historyObject = {
+      direction: nextDirection,
+      pos: mouse.pos,
+      key: createHistoryKey(nextPos)
+    };
+    mouse.previousDirection = mouse.direction;
+    mouse.direction = nextDirection;
+    mouse.history.push(historyObject);
+    mouse.pos = nextPos;
+    grid[mouse.pos.y][mouse.pos.x] |= Walls.VISITED;
+
+    //determine if mouse is stuck
+    /*
+    if(mouse.history.length > totalTiles) {
+      var history = mouse.history.slice(mouse.history.length > 100 ? mouse.history.length - 100: mouse.history.length);
+      var map = history.map(function(pos) {
+        return pos.x + ':' + pos.y;
+      });
+      var uniq = map.filter(function(itm, i){
+        return map.indexOf(itm) === i;
+        // returns true for only the first instance of itm
+      });
+      if(uniq.length < (mazeHeight + mazeWidth) * 0.5) {
+        console.warn('Mouse is probably stuck:', uniq.length);
+
+      }
+
+    }
+    */
+  }
+
+}
+
+function randomWalk(mouse) {
+  if (!mouse.solved) {
+    var nextPos;
+    if (mouse.pos.x === exitCell.x && mouse.pos.y === exitCell.y) {
+      mouse.solved = true;
+      return;
+    }
+
+    var currentCell = gridAt(mouse.pos.x, mouse.pos.y);
+    var possibleDirections = shuffle(getPossible(currentCell));
+    var nextDirection = SeekLookup[possibleDirections[0].key];
+    nextPos = new Point(mouse.pos.x + nextDirection.x, mouse.pos.y + nextDirection.y);
+    for(var i = 1; !inGridRange(nextPos.x, nextPos.y) && i < possibleDirections.length; i++) {
+      nextDirection = SeekLookup[possibleDirections[i].key];
+      nextPos = new Point(mouse.pos.x + nextDirection.x, mouse.pos.y + nextDirection.y);
+    }
+    var historyObject = {
+      pos: mouse.pos,
+    };
+    mouse.history.push(historyObject);
+    mouse.pos = nextPos;
+  }
+
+}
+
+function getPossible(cell){
+  var possibleDirections = [{
+      key: 'N',
+      value: !!(cell & Walls.N)
+    }, {
+      key: 'S',
+      value: !!(cell & Walls.S)
+    }, {
+      key: 'E',
+      value: !!(cell & Walls.E)
+    }, {
+      key: 'W',
+      value: !!(cell & Walls.W)
+    }, ].filter(function(d) {
+      return d.value;
+    });
+  return possibleDirections;
+}
+
+function createHistoryKey(pos) {
+  return pos.x + ':' + pos.y;
+}
+
+function getMouseHistory(mouse, key) {
+  var filtered = [];
+  filtered = mouse.history.filter(function(h) {
+    return h.key === key;
+  });
+  return filtered;
+}
+
+function randomDirection(exclusions) {
+  var ds = SeekDirections.slice(0);
+  if (exclusions) {
+    exclusions.forEach(function(exclusion) {
+      delete ds[exclusion];
+    });
+  }
+  return shuffle(ds)[0];
+}
+
+function draw() {
+  ctx.clearRect(0, 0, 1000, 1000);
+  if (mazeCreated && shouldSolve && !showDepths) {
+    drawMice(ctx);
+  }
+  if(showDepths) {
+    var keys = Object.keys(depths);
+    keys.sort(function(a,b) {
+      return parseInt(a) - parseInt(b);
+    });
+    var colorStep = 1/keys.length;
+    keys.forEach(function(key, i) {
+      var cells = depths[key];
+      cells.forEach(function(cell) {
+        ctx.save();
+        ctx.translate(cell.x * tileSize, cell.y * tileSize);
+        ctx.beginPath();
+        ctx.fillStyle = cs(colorStep * i).hex();
+        ctx.rect(0,0, tileSize, tileSize);
+        ctx.fill();
+        ctx.restore();
+      });
+    });
+  }
+  if (showMaze) {
+    for (var y = 0; y < mazeHeight; y++) {
+      for (var x = 0; x < mazeWidth; x++) {
+        var cell = gridAt(x, y);
+        ctx.save();
+
+        ctx.translate(x * tileSize, y * tileSize);
+        ctx.beginPath();
+        ctx.strokeStyle = '#333';
+        if (cell === 0) {
+          drawEastWall(ctx);
+          drawSouthWall(ctx);
+          drawUnvisited(ctx);
+        } else {
+          if (!(cell & Walls.S)) {
+            drawSouthWall(ctx);
+          }
+          if (!(cell & Walls.E)) {
+            drawEastWall(ctx);
+          }
+          if ((cell & Walls.ENTRY)) {
+            drawEntrance(ctx);
+          }
+          if (cell & Walls.EXIT) {
+            drawExit(ctx);
+          }
+        }
+        if (activeCell && x === activeCell.x && y === activeCell.y) {
+          drawActive(ctx);
+        } else if ((cell & Walls.VISITED)) {
+          //drawVisited(ctx);
+        }
+
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+}
+
+function drawEastWall(ctx) {
+  ctx.moveTo(tileSize, 0);
+  ctx.lineTo(tileSize, tileSize);
+}
+
+function drawSouthWall(ctx) {
+  ctx.moveTo(0, tileSize);
+  ctx.lineTo(tileSize, tileSize);
+}
+
+function drawExit(ctx) {
+
+  ctx.fillStyle = '#ff00ff';
+  ctx.fillRect(tileSize / 3, tileSize / 3, tileSize / 4, tileSize / 4);
+}
+
+function drawEntrance(ctx) {
+  ctx.fillStyle = '#00ffff';
+  ctx.fillRect(tileSize / 3, tileSize / 3, tileSize / 4, tileSize / 4);
+}
+
+function drawActive(ctx) {
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = '#99ff99';
+  ctx.fillRect(0, 0, tileSize, tileSize);
+  ctx.restore();
+}
+
+function drawVisited(ctx) {
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = '#ff9999';
+  ctx.fillRect(0, 0, tileSize, tileSize);
+  ctx.restore();
+}
+
+function drawUnvisited(ctx) {
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = '#999';
+  ctx.fillRect(0, 0, tileSize, tileSize);
+  ctx.restore();
+}
+
+
+function drawMice(ctx) {
+  mice.forEach(function(mouse) {
+    if (mouse.showTrail) {
+      var h;
+      for (var i = 0; i < mouse.history.length; i++) {
+        h = mouse.history[i].pos;
+        ctx.save();
+        ctx.globalAlpha = 0.15;
+        ctx.translate(h.x * tileSize, h.y * tileSize);
+        ctx.fillStyle = mouse.color;
+        ctx.fillRect(0, 0, tileSize, tileSize);
+        ctx.restore();
+
+      }
+    }
+    if(!mouse.solved) {
+      ctx.save();
+
+      ctx.fillStyle = mouse.color;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+
+      ctx.beginPath();
+      ctx.translate(mouse.pos.x * tileSize, mouse.pos.y * tileSize);
+
+      ctx.rect(0, 0, tileSize, tileSize);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+
+
+    /*
+    for(var i = mouse.history.length - 200 >= 0 ? mouse.history.length - 200 : 0,
+        len = mouse.history.length,
+        alphaStep = 1/(len - i); i < len; i++) {
+    */
+
+  });
+}
+init(30, 30, 10);
+update();
+
+//var raf = window.requestAniationFrame;
+
+
+function debugWall(mask) {
+  console.log('Given Mask', mask);
+  console.log('\tNorth Wall:', !(mask & Walls.N));
+  console.log('\tSouth Wall:', !(mask & Walls.S));
+  console.log('\tEast Wall:', !(mask & Walls.E));
+  console.log('\tWest Wall:', !(mask & Walls.W));
+}
+
+
+
+
+function inGridRange(x, y) {
+  if (x >= 0 && x < mazeWidth && y >= 0 && y < mazeHeight) {
+    return true;
+  }
+  return false;
+}
+
+function shuffle(array) {
+  var counter = array.length,
+    temp, index;
+
+  // While there are elements in the array
+  while (counter > 0) {
+    // Pick a random index
+    index = Math.floor(Math.random() * counter);
+
+    // Decrease counter by 1
+    counter--;
+
+    // And swap the last element with it
+    temp = array[counter];
+    array[counter] = array[index];
+    array[index] = temp;
+  }
+
+  return array;
+}
+
+
+function bindView() {
+  // inputs
+  rowsInput = document.getElementById('rows');
+  colsInput = document.getElementById('cols');
+  sizeInput = document.getElementById('size');
+
+  // outputs
+  rwSteps = document.getElementById('rwSteps');
+  rwmSteps = document.getElementById('rwmSteps');
+
+  // button setup
+  var stepBtn = document.getElementById('stepBtn');
+  runBtn = document.getElementById('runBtn');
+  goBtn = document.getElementById('goBtn');
+  quickBtn = document.getElementById('quickBtn');
+  solveRunBtn = document.getElementById('solveRunBtn');
+  quickSolveRunBtn = document.getElementById('quickSolveRunBtn');
+  toggleMazeBtn = document.getElementById('toggleMazeBtn');
+  toggleDepthBtn = document.getElementById('toggleDepthBtn');
+  rwmHeatmapBtn = document.getElementById('rwmHeatmap');
+  rwHeatmapBtn = document.getElementById('rwHeatmap');
+  rwmHeatmapBtn = document.getElementById('rwmHeatmap');
+
+
+  step2Buttons = [
+    runBtn,
+    quickBtn
+  ];
+  step3Buttons = [
+    solveRunBtn,
+    quickSolveRunBtn
+  ];
+
+  step4Buttons = [
+    toggleMazeBtn,
+    rwHeatmapBtn,
+    rwmHeatmapBtn
+  ];
+}
+
+
+function disableButtons() {
+  var args = Array.prototype.slice.call(arguments);
+  args.forEach(function(btnList) {
+    btnList.forEach(function(btn) {
+      btn.disabled = true;
+    });
+  });
+}
+
+function enableButtons() {
+  var args = Array.prototype.slice.call(arguments);
+  args.forEach(function(btnList) {
+    btnList.forEach(function(btn) {
+      btn.disabled = false;
+    });
+  });
+}

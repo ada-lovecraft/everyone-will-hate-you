@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title></title>
+  <style>
+  canvas {
+  border: 1px solid #333;
+  margin-left: 20px;
+  margin-top: 20px;
+}</style>
+</head>
+<body>
+<canvas id="maze"></canvas>
+<div>
+  <h4>1. Create a new grid</h4>
+  <label for="rows">Rows:</label> <input type="number" id="rows" value="10"/>
+  <label for="cols">Columns:</label> <input type="number" id="cols" value="10"/>
+  <label for="size">Size:</label> <input type="number" id="size" value="30"/>
+  <button id="goBtn">Go</button>
+</div>
+<div>
+  <h4> 2. Generate a new maze</h4>
+  <button id="runBtn">Run</button>
+  <button id="quickBtn">Quick</button>
+</div>
+<div>
+  <h4>3. Solve The Maze</h4>
+  <button id="solveRunBtn">Run Solve</button>
+  <button id="quickSolveRunBtn">Quick Solve</button>
+</div>
+<div>
+  <h4>4. Analyze</h4>
+  <button id="toggleMazeBtn">Toggle Maze Lines</button>
+  <button id="toggleDepthBtn">Toggle Maze Depth</button>
+  <p>
+  <b>Trails:</b>
+  </p>
+  <p>
+    <input type="checkbox" checked="true" id="rwHeatmap">Random Walker (<span id="rwSteps"></span> steps)</input>
+    <br/>
+    <input type="checkbox" checked="true" id="rwmHeatmap">Random Walker With Memory (<span id="rwmSteps"></span> steps)</input>
+  </p>
+</div>
+<script src="js/chroma.min.js"></script>
+<script src="js/maze.js"></script>
+
+</body>
+</html>
